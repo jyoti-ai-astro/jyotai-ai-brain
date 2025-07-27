@@ -1,19 +1,28 @@
 import os
-from fastapi import FastAPI, Request
+import traceback
+from typing import Optional, Literal
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
-import openai
+from pydantic import BaseModel
+from openai import OpenAI
 
-# OpenAI key setup
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# -------------------
+# Config
+# -------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://jyotai-v2-git-main-jyoti-ais-projects.vercel.app")
 
-# Create FastAPI app
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 app = FastAPI()
 
-# ✅ Correct CORS placement BEFORE routes
+# -------------------
+# CORS
+# -------------------
 origins = [
-    "https://jyotai-v2-git-main-jyoti-ais-projects.vercel.app",
+    FRONTEND_URL,
     "http://localhost:3000",
 ]
 
@@ -21,46 +30,62 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],        # ✅ Must include OPTIONS
-    allow_headers=["*"],        # ✅ Needed for JSON requests
+    allow_methods=["*"],  # ✅ FIXED: Was empty string
+    allow_headers=["*"],  # ✅ FIXED: Was empty string
 )
 
-# ✅ Prediction request model
+# -------------------
+# Schema
+# -------------------
 class PredictionRequest(BaseModel):
     question: str
+    dob: Optional[str] = None
+    tob: Optional[str] = None
+    pob: Optional[str] = None
+    gender: Optional[str] = None
+    plan: Literal["standard", "premium"] = "standard"
 
-# ✅ Prediction route
+# -------------------
+# Routes
+# -------------------
+@app.get("/")
+def health():
+    return {"status": "Brahmin GPT is awake and ready."}
+
 @app.post("/api/predict")
-async def get_prediction(request: PredictionRequest):
-    if not openai.api_key:
-        return JSONResponse(status_code=500, content={"error": "Missing OpenAI API key"})
+def predict(req: PredictionRequest):
+    if not OPENAI_API_KEY:
+        return JSONResponse(status_code=500, content={"error": "Missing OPENAI_API_KEY"})
 
     try:
-        print("📩 Incoming question:", request.question)
-
-        chat_completion = await openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are Brahmin GPT, a divine Vedic oracle. Answer with spiritual wisdom.",
-                },
-                {
-                    "role": "user",
-                    "content": request.question,
-                },
-            ]
+        system_prompt = (
+            "You are Brahmin GPT, a divine sage and Vedic astrologer. "
+            "You provide profound, wise, and comforting answers based on ancient wisdom. "
+            "Be specific, compassionate, and practical. If DOB/TOB/POB are missing, still respond gracefully."
         )
 
-        prediction = chat_completion.choices[0].message.content
+        # 💡 Extend context later with DOB, TOB, POB, etc.
+        user_context = (
+            f"Question: {req.question}\n"
+            f"DOB: {req.dob or 'N/A'}\n"
+            f"TOB: {req.tob or 'N/A'}\n"
+            f"POB: {req.pob or 'N/A'}\n"
+            f"Gender: {req.gender or 'N/A'}\n"
+            f"Plan: {req.plan}\n"
+        )
+
+        chat = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_context},
+            ],
+        )
+
+        prediction = chat.choices[0].message.content
         print("🔮 Prediction:", prediction)
         return {"prediction": prediction}
 
     except Exception as e:
-        print("❌ Error:", e)
-        return JSONResponse(status_code=500, content={"error": "Prediction failed."})
-
-# ✅ Health check
-@app.get("/")
-def read_root():
-    return {"status": "Brahmin GPT is awake."}
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": "The divine oracle is resting. Please try again."})
